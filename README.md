@@ -63,6 +63,16 @@ Sigue estos pasos para instalar y configurar la aplicación:
 
     -   Utiliza las herramientas y visualizaciones proporcionadas en cada pestaña para gestionar y analizar tus recursos de AWS.
 
+3.  **Crear archivo ejecutable:**
+
+    -   Este programa esta pensado para ejecutarse como un archivo portable, para empaquetarlo como un .EXE es necesario tener instalado PyInstaller y en una terminal de windows, en la misma carpeta correr el siguiente comando: 
+
+    ```bash
+    python -m PyInstaller --onefile --noconsole --icon=power.ico power.py
+    ```
+
+    Luego el archivo de ejecución quedará disponible en ./dist/power.exe
+    
 ## Licencia
 
 Este proyecto está bajo la Licencia MIT.
