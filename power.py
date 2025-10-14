@@ -13,6 +13,7 @@ from rds import RDSTab
 from s3 import S3Tab
 from vpc import VPCTab
 from sg import SGTab
+from fsx import FSxTab  # Nuevo import
 
 
 class AppAWS:
@@ -41,6 +42,7 @@ class AppAWS:
         self.ec2_client = None
         self.rds_client = None
         self.s3_client = None
+        self.fsx_client = None  # Nuevo cliente
         self.sts_client = None  # Cliente STS para obtener información de la cuenta
         self.iam_client = None  # Cliente IAM para obtener información adicional
         self.cuenta_actual = None
@@ -52,6 +54,7 @@ class AppAWS:
         self.s3_tab = None
         self.vpc_tab = None
         self.sg_tab = None
+        self.fsx_tab = None  # Nueva referencia
   
 
         self.crear_header()
@@ -181,6 +184,11 @@ class AppAWS:
         tab_sg_frame = ttk.Frame(self.tabs)
         self.tabs.add(tab_sg_frame, text=" Security Groups ")
         self.sg_tab = SGTab(tab_sg_frame, self)
+
+        # Nueva pestaña para FSx
+        tab_fsx_frame = ttk.Frame(self.tabs)
+        self.tabs.add(tab_fsx_frame, text=" FSx ")
+        self.fsx_tab = FSxTab(tab_fsx_frame, self)
 
     def mostrar_info_cuenta(self):
        
@@ -359,6 +367,7 @@ class AppAWS:
                 self.ec2_client = cliente.crear("ec2", cuenta)
                 self.rds_client = cliente.crear("rds", cuenta)
                 self.s3_client = cliente.crear("s3", cuenta)
+                self.fsx_client = cliente.crear("fsx", cuenta)
                 self.sts_client = cliente.crear("sts", cuenta)
                 self.iam_client = cliente.crear("iam", cuenta)
                 self.cuenta_actual = cuenta
@@ -384,6 +393,10 @@ class AppAWS:
         # Limpiar cliente S3 en la tab para forzar recreación
         if hasattr(self, 's3_tab'):
             self.s3_tab.s3_client = None
+        
+        # Limpiar cliente FSx en la tab para forzar recreación
+        if hasattr(self, 'fsx_tab'):
+            self.fsx_tab.fsx_client = None
         
         # Limpiar cache de información de cuenta para forzar actualización
         if self.cuenta_actual in self.info_cuentas_cache:
