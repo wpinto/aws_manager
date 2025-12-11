@@ -12,8 +12,6 @@ class FSxTab:
         self.tree_fsx = None
         self.fsx_count_label = None
         self.fsx_data = []
-        self.type_combo = None
-        self.selected_type = "all"
         
         self.crear_tab_fsx()
     
@@ -38,26 +36,16 @@ class FSxTab:
                                command=self.refrescar_fsx)
         refresh_btn.pack(side='right')
         
-        # Frame filtro
-        filter_frame = ttk.Frame(self.parent_frame)
-        filter_frame.pack(fill='x', padx=20, pady=(0, 15))
-        
-        ttk.Label(filter_frame, text="Filtrar por tipo:").pack(side='left')
-        
-        self.type_combo = ttk.Combobox(filter_frame, state="readonly", width=40)
-        self.type_combo.pack(side='left', padx=(10, 0))
-        self.type_combo.bind("<<ComboboxSelected>>", self.filtrar_por_tipo)
-        
         # TreeView
         tree_frame = ttk.Frame(self.parent_frame)
         tree_frame.pack(expand=True, fill='both', padx=20, pady=(0, 20))
         
-        columns = ["ID", "Nombre", "Tipo", "Estado", "Tamaño (GB)", "VPC", "Zona", "Creación"]
+        columns = ["ID", "Nombre", "Estado", "Tamaño (GB)", "IP Addresses", "VPC", "Creación"]
         self.tree_fsx = ttk.Treeview(tree_frame, columns=columns, show="headings", 
                                    selectmode="browse")
         
         # Configurar columnas
-        widths = [180, 200, 120, 100, 100, 150, 120, 140]
+        widths = [150, 180, 80, 80, 350, 200, 140]
         for col, width in zip(columns, widths):
             self.tree_fsx.heading(col, text=col)
             self.tree_fsx.column(col, width=width, minwidth=50)
@@ -76,10 +64,6 @@ class FSxTab:
         
         # Eventos
         self.tree_fsx.bind('<Double-1>', self.ver_detalles_fsx)
-        
-        # Inicializar combo de tipos
-        self.type_combo.configure(values=["Todos los tipos", "WINDOWS", "LUSTRE", "ONTAP", "OPENZFS"])
-        self.type_combo.set("Todos los tipos")
     
     def refrescar_fsx(self):
         """Refrescar la lista de FSx file systems"""
@@ -127,13 +111,10 @@ class FSxTab:
             if 'VpcId' in fs:
                 vpc_id = fs['VpcId']
             elif 'SubnetIds' in fs and fs['SubnetIds']:
-                # Si no hay VPC directa, podemos inferirla de las subnets
                 vpc_id = 'Múltiples subnets'
             
-            # Obtener zona de disponibilidad
-            az = 'N/A'
-            if 'SubnetIds' in fs and fs['SubnetIds']:
-                az = f"{len(fs['SubnetIds'])} subnet(s)"
+            # Obtener direcciones IP
+            ip_addresses = self.obtener_ip_addresses(fs)
             
             # Fecha de creación
             creation_time = fs.get('CreationTime', '')
@@ -147,7 +128,7 @@ class FSxTab:
                 'lifecycle': fs.get('Lifecycle', 'UNKNOWN'),
                 'storage_capacity': storage_capacity,
                 'vpc_id': vpc_id,
-                'az': az,
+                'ip_addresses': ip_addresses,
                 'creation_time': creation_time,
                 'dns_name': fs.get('DNSName', 'N/A'),
                 'owner_id': fs.get('OwnerId', 'N/A'),
@@ -161,26 +142,69 @@ class FSxTab:
             }
             fsx_list.append(fs_data)
         
-        return sorted(fsx_list, key=lambda x: (x['type'], x['name']))
+        return sorted(fsx_list, key=lambda x: x['name'])
+    
+    def obtener_ip_addresses(self, fs):
+        """Extrae las direcciones IP del file system según su tipo"""
+        ip_addresses = []
+        
+        # Para Windows FSx
+        if 'WindowsConfiguration' in fs:
+            if 'PreferredFileServerIp' in fs['WindowsConfiguration']:
+                ip_addresses.append(fs['WindowsConfiguration']['PreferredFileServerIp'])
+            if 'RemoteAdministrationEndpoint' in fs['WindowsConfiguration']:
+                endpoint = fs['WindowsConfiguration']['RemoteAdministrationEndpoint']
+                if isinstance(endpoint, str):
+                    # Extraer IP si está en formato IP:puerto
+                    ip = endpoint.split(':')[0]
+                    if ip not in ip_addresses:
+                        ip_addresses.append(ip)
+        
+        # Para Lustre FSx
+        if 'LustreConfiguration' in fs:
+            if 'MountName' in fs['LustreConfiguration']:
+                # Lustre usa DNS, pero podemos mostrar el mount name
+                mount = fs['LustreConfiguration']['MountName']
+                if mount and mount not in ip_addresses:
+                    ip_addresses.append(f"Mount: {mount}")
+        
+        # Para ONTAP FSx
+        if 'OntapConfiguration' in fs:
+            if 'Endpoints' in fs['OntapConfiguration']:
+                endpoints = fs['OntapConfiguration']['Endpoints']
+                if 'Management' in endpoints and 'IpAddresses' in endpoints['Management']:
+                    ip_addresses.extend(endpoints['Management']['IpAddresses'])
+                if 'Intercluster' in endpoints and 'IpAddresses' in endpoints['Intercluster']:
+                    ip_addresses.extend(endpoints['Intercluster']['IpAddresses'])
+        
+        # Para OpenZFS FSx
+        if 'OpenZFSConfiguration' in fs:
+            if 'EndpointIpAddress' in fs['OpenZFSConfiguration']:
+                ip = fs['OpenZFSConfiguration']['EndpointIpAddress']
+                if ip and ip not in ip_addresses:
+                    ip_addresses.append(ip)
+        
+        # Si no se encontraron IPs específicas, intentar obtener desde network interfaces
+        if not ip_addresses and 'NetworkInterfaceIds' in fs:
+            # Nota: Aquí necesitarías hacer una llamada adicional a EC2 para obtener las IPs
+            # de las network interfaces, pero eso requeriría el cliente EC2
+            pass
+        
+        return ', '.join(ip_addresses) if ip_addresses else 'N/A'
     
     def actualizar_tree_fsx(self, fsx_list):
         """Actualizar el TreeView con los datos"""
         self.fsx_data = fsx_list
-        self.mostrar_fsx_filtrados()
+        self.mostrar_fsx()
     
-    def mostrar_fsx_filtrados(self):
-        """Mostrar FSx file systems filtrados"""
+    def mostrar_fsx(self):
+        """Mostrar FSx file systems"""
         # Limpiar tree
         for item in self.tree_fsx.get_children():
             self.tree_fsx.delete(item)
         
-        # Aplicar filtro
-        fsx_filtrados = self.fsx_data
-        if self.selected_type != "all":
-            fsx_filtrados = [fs for fs in self.fsx_data if fs['type'] == self.selected_type]
-        
         # Insertar datos
-        for fs in fsx_filtrados:
+        for fs in self.fsx_data:
             # Color según estado
             estado = fs['lifecycle']
             tag = ''
@@ -194,35 +218,24 @@ class FSxTab:
             item_id = self.tree_fsx.insert("", "end", values=(
                 fs['id'],
                 fs['name'],
-                fs['type'],
                 estado,
                 fs['storage_capacity'],
+                fs['ip_addresses'],
                 fs['vpc_id'],
-                fs['az'],
                 fs['creation_time']
             ), tags=(tag,))
         
         # Configurar tags de colores
-        self.tree_fsx.tag_configure('available', foreground='green')
+        self.tree_fsx.tag_configure('available', foreground='white')
         self.tree_fsx.tag_configure('updating', foreground='orange')
         self.tree_fsx.tag_configure('failed', foreground='red')
         
         # Actualizar contador
-        count = len(fsx_filtrados)
-        total_storage = sum(fs['storage_capacity'] for fs in fsx_filtrados)
+        count = len(self.fsx_data)
+        total_storage = sum(fs['storage_capacity'] for fs in self.fsx_data)
         self.fsx_count_label.config(
             text=f"{count} file systems | {total_storage:,} GB total"
         )
-    
-    def filtrar_por_tipo(self, event):
-        """Filtrar FSx por tipo"""
-        selection = self.type_combo.get()
-        if selection == "Todos los tipos":
-            self.selected_type = "all"
-        else:
-            self.selected_type = selection
-        
-        self.mostrar_fsx_filtrados()
     
     def ver_detalles_fsx(self, event=None):
         """Ver los detalles del FSx file system seleccionado"""
@@ -247,7 +260,7 @@ class FSxDetailsViewer:
         
         self.window = tk.Toplevel(parent)
         self.window.title(f"Detalles FSx - {fs_data['name']}")
-        self.window.geometry("900x700")
+        self.window.geometry("700x850")
         self.window.transient(parent)
         
         self.crear_interfaz()
@@ -307,6 +320,7 @@ class FSxDetailsViewer:
             ("Tipo:", self.fs_data['type']),
             ("Estado:", self.fs_data['lifecycle']),
             ("Capacidad:", f"{self.fs_data['storage_capacity']:,} GB"),
+            ("IP Addresses:", self.fs_data['ip_addresses']),
             ("DNS Name:", self.fs_data['dns_name']),
             ("Owner ID:", self.fs_data['owner_id']),
             ("Creación:", self.fs_data['creation_time']),
@@ -317,8 +331,8 @@ class FSxDetailsViewer:
             ttk.Label(frame, text=label, font=('Segoe UI', 10, 'bold')).grid(
                 row=i, column=0, sticky='w', pady=5, padx=(0, 10))
             
-            # Para el ARN, usar un Text widget con scroll
-            if label == "ARN:" or label == "DNS Name:" or label == "File System ID:":
+            # Para campos largos, usar un Text widget
+            if label in ["ARN:", "DNS Name:", "File System ID:", "IP Addresses:"]:
                 text_widget = tk.Text(frame, height=2, width=60, wrap='word')
                 text_widget.insert('1.0', value)
                 text_widget.config(state='disabled')
@@ -364,6 +378,8 @@ class FSxDetailsViewer:
             info.append(("Backup Start Time:", config['DailyAutomaticBackupStartTime']))
         if 'CopyTagsToBackups' in config:
             info.append(("Copy Tags to Backups:", str(config['CopyTagsToBackups'])))
+        if 'PreferredFileServerIp' in config:
+            info.append(("Preferred File Server IP:", config['PreferredFileServerIp']))
         
         for i, (label, value) in enumerate(info):
             ttk.Label(parent, text=label, font=('Segoe UI', 10, 'bold')).grid(
@@ -412,6 +428,11 @@ class FSxDetailsViewer:
             info.append(("Backup Retention:", f"{config['AutomaticBackupRetentionDays']} días"))
         if 'DailyAutomaticBackupStartTime' in config:
             info.append(("Backup Start Time:", config['DailyAutomaticBackupStartTime']))
+        if 'Endpoints' in config:
+            endpoints = config['Endpoints']
+            if 'Management' in endpoints and 'IpAddresses' in endpoints['Management']:
+                ips = ', '.join(endpoints['Management']['IpAddresses'])
+                info.append(("Management IPs:", ips))
         
         for i, (label, value) in enumerate(info):
             ttk.Label(parent, text=label, font=('Segoe UI', 10, 'bold')).grid(
@@ -436,6 +457,8 @@ class FSxDetailsViewer:
             info.append(("Copy Tags to Backups:", str(config['CopyTagsToBackups'])))
         if 'CopyTagsToVolumes' in config:
             info.append(("Copy Tags to Volumes:", str(config['CopyTagsToVolumes'])))
+        if 'EndpointIpAddress' in config:
+            info.append(("Endpoint IP Address:", config['EndpointIpAddress']))
         
         for i, (label, value) in enumerate(info):
             ttk.Label(parent, text=label, font=('Segoe UI', 10, 'bold')).grid(
@@ -452,22 +475,27 @@ class FSxDetailsViewer:
         ttk.Label(frame, text=self.fs_data['vpc_id']).grid(
             row=0, column=1, sticky='w', pady=5)
         
+        ttk.Label(frame, text="IP Addresses:", font=('Segoe UI', 10, 'bold')).grid(
+            row=1, column=0, sticky='w', pady=5, padx=(0, 10))
+        ttk.Label(frame, text=self.fs_data['ip_addresses']).grid(
+            row=1, column=1, sticky='w', pady=5)
+        
         ttk.Label(frame, text="Subnet IDs:", font=('Segoe UI', 10, 'bold')).grid(
-            row=1, column=0, sticky='nw', pady=5, padx=(0, 10))
+            row=2, column=0, sticky='nw', pady=5, padx=(0, 10))
         
         if self.fs_data['subnet_ids']:
             subnets_text = '\n'.join(self.fs_data['subnet_ids'])
             text_widget = tk.Text(frame, height=len(self.fs_data['subnet_ids']) + 1, width=50, wrap='none')
             text_widget.insert('1.0', subnets_text)
             text_widget.config(state='disabled')
-            text_widget.grid(row=1, column=1, sticky='w', pady=5)
+            text_widget.grid(row=2, column=1, sticky='w', pady=5)
         else:
-            ttk.Label(frame, text="N/A").grid(row=1, column=1, sticky='w', pady=5)
+            ttk.Label(frame, text="N/A").grid(row=2, column=1, sticky='w', pady=5)
         
         ttk.Label(frame, text="DNS Name:", font=('Segoe UI', 10, 'bold')).grid(
-            row=2, column=0, sticky='w', pady=5, padx=(0, 10))
+            row=3, column=0, sticky='w', pady=5, padx=(0, 10))
         ttk.Label(frame, text=self.fs_data['dns_name']).grid(
-            row=2, column=1, sticky='w', pady=5)
+            row=3, column=1, sticky='w', pady=5)
     
     def crear_tab_tags(self, parent):
         """Crear pestaña de tags"""
