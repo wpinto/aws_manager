@@ -1,61 +1,63 @@
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
+import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 import threading
-import cliente as cliente
-from datetime import datetime
+
 
 class FSxTab:
     def __init__(self, parent_frame, main_app):
         self.parent_frame = parent_frame
         self.main_app = main_app
-        self.fsx_client = None
-        self.fsx_data = []
         self.tree_fsx = None
         self.fsx_count_label = None
-        self.details_text = None
-        self.selected_fs = None
+        self.fsx_data = []
+        self.type_combo = None
+        self.selected_type = "all"
         
         self.crear_tab_fsx()
-
+    
     def crear_tab_fsx(self):
         """Crear la interfaz principal del tab de FSx"""
-        # Panel principal dividido
-        panel_principal = ttk.PanedWindow(self.parent_frame, orient='horizontal')
-        panel_principal.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # Panel izquierdo
-        panel_izquierdo = ttk.Frame(panel_principal)
-        panel_principal.add(panel_izquierdo, weight=2)
+        # Frame superior
+        top_frame = ttk.Frame(self.parent_frame)
+        top_frame.pack(fill='x', padx=20, pady=15)
         
-        # Frame superior con título y controles
-        top_frame = ttk.Frame(panel_izquierdo)
-        top_frame.pack(fill='x', pady=(0, 10))
+        # Título
+        title_label = ttk.Label(top_frame, text="💾 Amazon FSx File Systems", 
+                               font=('Segoe UI', 16, 'bold'))
+        title_label.pack(side='left')
         
-        ttk.Label(top_frame, text="🗄️ FSx File Systems", 
-                 font=('Segoe UI', 16, 'bold')).pack(side='left')
-        
-        self.fsx_count_label = ttk.Label(top_frame, text="0 File Systems",
+        # Contador
+        self.fsx_count_label = ttk.Label(top_frame, text="0 file systems",
                                        font=('Segoe UI', 10))
         self.fsx_count_label.pack(side='left', padx=(20, 0))
         
-        # Frame de acciones
-        actions_frame = ttk.Frame(top_frame)
-        actions_frame.pack(side='right')
+        # Botón actualizar
+        refresh_btn = ttk.Button(top_frame, text="🔄 Actualizar", 
+                               command=self.refrescar_fsx)
+        refresh_btn.pack(side='right')
         
-        ttk.Button(actions_frame, text="🔄 Actualizar", 
-                  command=self.refrescar_fsx,
-                  style='primary.TButton').pack(side='left', padx=5)
-
-        # TreeView para File Systems
-        tree_frame = ttk.Frame(panel_izquierdo)
-        tree_frame.pack(fill='both', expand=True)
+        # Frame filtro
+        filter_frame = ttk.Frame(self.parent_frame)
+        filter_frame.pack(fill='x', padx=20, pady=(0, 15))
         
-        columns = ["ID", "Nombre", "Tipo", "Estado", "Tamaño (GB)", "IOPS", "Throughput (MB/s)"]
+        ttk.Label(filter_frame, text="Filtrar por tipo:").pack(side='left')
+        
+        self.type_combo = ttk.Combobox(filter_frame, state="readonly", width=40)
+        self.type_combo.pack(side='left', padx=(10, 0))
+        self.type_combo.bind("<<ComboboxSelected>>", self.filtrar_por_tipo)
+        
+        # TreeView
+        tree_frame = ttk.Frame(self.parent_frame)
+        tree_frame.pack(expand=True, fill='both', padx=20, pady=(0, 20))
+        
+        columns = ["ID", "Nombre", "Tipo", "Estado", "Tamaño (GB)", "VPC", "Zona", "Creación"]
         self.tree_fsx = ttk.Treeview(tree_frame, columns=columns, show="headings", 
                                    selectmode="browse")
         
-        widths = [150, 200, 100, 100, 100, 100, 120]
+        # Configurar columnas
+        widths = [180, 200, 120, 100, 100, 150, 120, 140]
         for col, width in zip(columns, widths):
             self.tree_fsx.heading(col, text=col)
             self.tree_fsx.column(col, width=width, minwidth=50)
@@ -72,235 +74,426 @@ class FSxTab:
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
         
-        # Panel derecho
-        panel_derecho = ttk.Frame(panel_principal)
-        panel_principal.add(panel_derecho, weight=1)
-        
-        # Notebook para detalles
-        self.detail_tabs = ttk.Notebook(panel_derecho)
-        self.detail_tabs.pack(fill='both', expand=True)
-        
-        # Tab de Detalles
-        tab_detalles = ttk.Frame(self.detail_tabs)
-        self.detail_tabs.add(tab_detalles, text="Detalles")
-        
-        self.details_text = tk.Text(tab_detalles, wrap='word', font=('Segoe UI', 10),
-                                  bg='#2b2b2b', fg='white')
-        self.details_text.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        # Tab de Acciones
-        tab_acciones = ttk.Frame(self.detail_tabs)
-        self.detail_tabs.add(tab_acciones, text="Acciones")
-        
-        # Botones de acciones
-        ttk.Button(tab_acciones, text="🔄 Crear Backup", 
-                  command=self.crear_backup).pack(fill='x', padx=10, pady=5)
-        
-        ttk.Button(tab_acciones, text="📊 Ver Métricas", 
-                  command=self.ver_metricas).pack(fill='x', padx=10, pady=5)
-        
-        ttk.Button(tab_acciones, text="⚙️ Modificar", 
-                  command=self.modificar_fs).pack(fill='x', padx=10, pady=5)
-        
         # Eventos
-        self.tree_fsx.bind('<<TreeviewSelect>>', self.mostrar_detalles)
-        self.tree_fsx.bind('<Double-1>', self.ver_metricas)
-        self.tree_fsx.bind('<Button-3>', self.mostrar_menu_contextual)
-
+        self.tree_fsx.bind('<Double-1>', self.ver_detalles_fsx)
+        
+        # Inicializar combo de tipos
+        self.type_combo.configure(values=["Todos los tipos", "WINDOWS", "LUSTRE", "ONTAP", "OPENZFS"])
+        self.type_combo.set("Todos los tipos")
+    
     def refrescar_fsx(self):
+        """Refrescar la lista de FSx file systems"""
         if not self.main_app.fsx_client:
             messagebox.showwarning("Sin conexión", "Conecta a una cuenta AWS primero")
             return
             
-        self.main_app.status_bar.set_status("Cargando File Systems FSx...", "info")
+        self.main_app.status_bar.set_status("Cargando FSx file systems...", "info")
         
         def cargar_datos():
             try:
-                self.main_app.loading.show("Cargando FSx...")
-                fsx_filesystems = self.obtener_fsx_filesystems()
-                self.main_app.root.after(0, self.actualizar_tree_fsx, fsx_filesystems)
+                fsx_list = self.obtener_fsx_filesystems()
+                self.main_app.root.after(0, self.actualizar_tree_fsx, fsx_list)
             except Exception as e:
                 self.main_app.root.after(0, lambda: messagebox.showerror(
-                    "Error", f"Error al cargar File Systems FSx: {str(e)}"))
+                    "Error", f"Error al cargar FSx: {str(e)}"))
             finally:
-                self.main_app.root.after(0, self.main_app.loading.hide)
                 self.main_app.root.after(0, lambda: self.main_app.status_bar.set_status(
                     "Conectado", "success"))
         
         threading.Thread(target=cargar_datos, daemon=True).start()
-
+    
     def obtener_fsx_filesystems(self):
-        """Obtiene todos los file systems FSx con detalles adicionales"""
-        if not self.fsx_client:
-            self.fsx_client = cliente.crear("fsx", self.main_app.cuenta_actual)
+        """Obtiene todos los file systems de FSx"""
+        response = self.main_app.fsx_client.describe_file_systems()
+        fsx_list = []
         
-        response = self.fsx_client.describe_file_systems()
-        fsx_filesystems = []
-        
-        for fsx in response['FileSystems']:
-            name = "N/A"
-            for tag in fsx.get('Tags', []):
-                if tag['Key'] == 'Name':
-                    name = tag['Value']
-                    break
+        for fs in response['FileSystems']:
+            # Obtener nombre del tag Name
+            fs_name = fs.get('FileSystemId', 'N/A')
+            if 'Tags' in fs:
+                for tag in fs['Tags']:
+                    if tag['Key'] == 'Name' and tag['Value']:
+                        fs_name = tag['Value']
+                        break
             
-            fsx_data = {
-                'id': fsx['FileSystemId'],
-                'name': name,
-                'type': fsx['FileSystemType'],
-                'lifecycle': fsx['Lifecycle'],
-                'storage_capacity': fsx['StorageCapacity'],
-                'subnet_ids': fsx.get('SubnetIds', []),
-                'network_interface_ids': fsx.get('NetworkInterfaceIds', []),
-                'vpc_id': fsx.get('VpcId', 'N/A'),
-                'kms_key_id': fsx.get('KmsKeyId', 'N/A'),
-                'storage_type': fsx.get('StorageType', 'N/A'),
-                'deployment_type': fsx.get('WindowsConfiguration', {}).get('DeploymentType', 'N/A'),
-                'throughput_capacity': fsx.get('WindowsConfiguration', {}).get('ThroughputCapacity', 0),
-                'maintenance_window': fsx.get('WindowsConfiguration', {}).get('WeeklyMaintenanceStartTime', 'N/A'),
-                'automatic_backup_retention_days': fsx.get('WindowsConfiguration', {}).get('AutomaticBackupRetentionDays', 0),
-                'daily_automatic_backup_start_time': fsx.get('WindowsConfiguration', {}).get('DailyAutomaticBackupStartTime', 'N/A'),
-                'copy_tags_to_backups': fsx.get('WindowsConfiguration', {}).get('CopyTagsToBackups', False),
-                'iops': fsx.get('WindowsConfiguration', {}).get('Iops', 0),
-                'creation_time': fsx['CreationTime'].strftime('%Y-%m-%d %H:%M:%S'),
+            # Obtener tamaño según el tipo
+            storage_capacity = fs.get('StorageCapacity', 0)
+            
+            # Determinar tipo de FS
+            fs_type = fs.get('FileSystemType', 'UNKNOWN')
+            
+            # Obtener VPC ID
+            vpc_id = 'N/A'
+            if 'VpcId' in fs:
+                vpc_id = fs['VpcId']
+            elif 'SubnetIds' in fs and fs['SubnetIds']:
+                # Si no hay VPC directa, podemos inferirla de las subnets
+                vpc_id = 'Múltiples subnets'
+            
+            # Obtener zona de disponibilidad
+            az = 'N/A'
+            if 'SubnetIds' in fs and fs['SubnetIds']:
+                az = f"{len(fs['SubnetIds'])} subnet(s)"
+            
+            # Fecha de creación
+            creation_time = fs.get('CreationTime', '')
+            if creation_time:
+                creation_time = creation_time.strftime('%Y-%m-%d %H:%M')
+            
+            fs_data = {
+                'id': fs['FileSystemId'],
+                'name': fs_name,
+                'type': fs_type,
+                'lifecycle': fs.get('Lifecycle', 'UNKNOWN'),
+                'storage_capacity': storage_capacity,
+                'vpc_id': vpc_id,
+                'az': az,
+                'creation_time': creation_time,
+                'dns_name': fs.get('DNSName', 'N/A'),
+                'owner_id': fs.get('OwnerId', 'N/A'),
+                'resource_arn': fs.get('ResourceARN', 'N/A'),
+                'subnet_ids': fs.get('SubnetIds', []),
+                'tags': fs.get('Tags', []),
+                'windows_config': fs.get('WindowsConfiguration', {}),
+                'lustre_config': fs.get('LustreConfiguration', {}),
+                'ontap_config': fs.get('OntapConfiguration', {}),
+                'openzfs_config': fs.get('OpenZFSConfiguration', {})
             }
-            fsx_filesystems.append(fsx_data)
+            fsx_list.append(fs_data)
         
-        return fsx_filesystems
-
-    def actualizar_tree_fsx(self, fsx_filesystems):
-        """Actualizar el TreeView con los datos de FSx"""
-        self.fsx_data = fsx_filesystems
-        
+        return sorted(fsx_list, key=lambda x: (x['type'], x['name']))
+    
+    def actualizar_tree_fsx(self, fsx_list):
+        """Actualizar el TreeView con los datos"""
+        self.fsx_data = fsx_list
+        self.mostrar_fsx_filtrados()
+    
+    def mostrar_fsx_filtrados(self):
+        """Mostrar FSx file systems filtrados"""
         # Limpiar tree
         for item in self.tree_fsx.get_children():
             self.tree_fsx.delete(item)
         
-        # Insertar datos
-        for fsx in fsx_filesystems:
-            values = (
-                fsx['id'],
-                fsx['name'],
-                fsx['type'],
-                fsx['lifecycle'],
-                fsx['storage_capacity'],
-                fsx['iops'],
-                fsx['throughput_capacity']
-            )
-            
-            tag = self.obtener_tag_estado(fsx['lifecycle'])
-            self.tree_fsx.insert("", "end", values=values, tags=(tag,))
+        # Aplicar filtro
+        fsx_filtrados = self.fsx_data
+        if self.selected_type != "all":
+            fsx_filtrados = [fs for fs in self.fsx_data if fs['type'] == self.selected_type]
         
-        # Configurar colores
-        self.tree_fsx.tag_configure("success", foreground="#28a745")
-        self.tree_fsx.tag_configure("warning", foreground="#ffc107")
-        self.tree_fsx.tag_configure("danger", foreground="#dc3545")
+        # Insertar datos
+        for fs in fsx_filtrados:
+            # Color según estado
+            estado = fs['lifecycle']
+            tag = ''
+            if estado == 'AVAILABLE':
+                tag = 'available'
+            elif estado in ['CREATING', 'UPDATING']:
+                tag = 'updating'
+            elif estado in ['FAILED', 'DELETING', 'DELETED']:
+                tag = 'failed'
+            
+            item_id = self.tree_fsx.insert("", "end", values=(
+                fs['id'],
+                fs['name'],
+                fs['type'],
+                estado,
+                fs['storage_capacity'],
+                fs['vpc_id'],
+                fs['az'],
+                fs['creation_time']
+            ), tags=(tag,))
+        
+        # Configurar tags de colores
+        self.tree_fsx.tag_configure('available', foreground='green')
+        self.tree_fsx.tag_configure('updating', foreground='orange')
+        self.tree_fsx.tag_configure('failed', foreground='red')
         
         # Actualizar contador
-        count = len(fsx_filesystems)
-        self.fsx_count_label.config(text=f"{count} File Systems")
-
-    def obtener_tag_estado(self, estado):
-        """Determina el tag de color según el estado"""
-        if estado == "AVAILABLE":
-            return "success"
-        elif estado in ["CREATING", "UPDATING"]:
-            return "warning"
+        count = len(fsx_filtrados)
+        total_storage = sum(fs['storage_capacity'] for fs in fsx_filtrados)
+        self.fsx_count_label.config(
+            text=f"{count} file systems | {total_storage:,} GB total"
+        )
+    
+    def filtrar_por_tipo(self, event):
+        """Filtrar FSx por tipo"""
+        selection = self.type_combo.get()
+        if selection == "Todos los tipos":
+            self.selected_type = "all"
         else:
-            return "danger"
-
-    def mostrar_detalles(self, event=None):
-        """Muestra los detalles del file system seleccionado"""
-        selection = self.tree_fsx.selection()
-        if not selection:
+            self.selected_type = selection
+        
+        self.mostrar_fsx_filtrados()
+    
+    def ver_detalles_fsx(self, event=None):
+        """Ver los detalles del FSx file system seleccionado"""
+        selected = self.tree_fsx.selection()
+        if not selected:
             return
         
-        item = selection[0]
-        fs_id = self.tree_fsx.item(item)['values'][0]
+        item = self.tree_fsx.item(selected[0])
+        fs_id = item["values"][0]
         
         # Buscar datos completos
-        fs_data = next((fs for fs in self.fsx_data if fs['id'] == fs_id), None)
-        if not fs_data:
+        fs_data = next((fs for fs in self.fsx_data if fs["id"] == fs_id), None)
+        if fs_data:
+            FSxDetailsViewer(self.main_app.root, fs_data)
+
+
+class FSxDetailsViewer:
+    """Ventana para visualizar detalles de un FSx file system"""
+    
+    def __init__(self, parent, fs_data):
+        self.fs_data = fs_data
+        
+        self.window = tk.Toplevel(parent)
+        self.window.title(f"Detalles FSx - {fs_data['name']}")
+        self.window.geometry("900x700")
+        self.window.transient(parent)
+        
+        self.crear_interfaz()
+    
+    def crear_interfaz(self):
+        """Crear la interfaz de la ventana"""
+        # Header
+        header_frame = ttk.Frame(self.window)
+        header_frame.pack(fill='x', padx=20, pady=20)
+        
+        ttk.Label(header_frame, text=f"💾 {self.fs_data['name']}", 
+                 font=('Segoe UI', 14, 'bold')).pack(anchor='w')
+        
+        ttk.Label(header_frame, text=f"ID: {self.fs_data['id']}").pack(anchor='w', pady=(5, 0))
+        ttk.Label(header_frame, text=f"Tipo: {self.fs_data['type']}").pack(anchor='w')
+        ttk.Label(header_frame, text=f"Estado: {self.fs_data['lifecycle']}").pack(anchor='w')
+        
+        # Separador
+        ttk.Separator(self.window, orient='horizontal').pack(fill='x', padx=20, pady=10)
+        
+        # Notebook para pestañas
+        notebook = ttk.Notebook(self.window)
+        notebook.pack(expand=True, fill='both', padx=20, pady=(0, 20))
+        
+        # Tab General
+        general_frame = ttk.Frame(notebook)
+        notebook.add(general_frame, text="General")
+        self.crear_tab_general(general_frame)
+        
+        # Tab Configuración específica
+        config_frame = ttk.Frame(notebook)
+        notebook.add(config_frame, text=f"Configuración {self.fs_data['type']}")
+        self.crear_tab_configuracion(config_frame)
+        
+        # Tab Red
+        network_frame = ttk.Frame(notebook)
+        notebook.add(network_frame, text="Red")
+        self.crear_tab_red(network_frame)
+        
+        # Tab Tags
+        tags_frame = ttk.Frame(notebook)
+        notebook.add(tags_frame, text=f"Tags ({len(self.fs_data['tags'])})")
+        self.crear_tab_tags(tags_frame)
+        
+        # Botón cerrar
+        ttk.Button(self.window, text="Cerrar", 
+                  command=self.window.destroy).pack(pady=(0, 20))
+    
+    def crear_tab_general(self, parent):
+        """Crear pestaña de información general"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill='both', expand=True, padx=15, pady=15)
+        
+        info = [
+            ("File System ID:", self.fs_data['id']),
+            ("Nombre:", self.fs_data['name']),
+            ("Tipo:", self.fs_data['type']),
+            ("Estado:", self.fs_data['lifecycle']),
+            ("Capacidad:", f"{self.fs_data['storage_capacity']:,} GB"),
+            ("DNS Name:", self.fs_data['dns_name']),
+            ("Owner ID:", self.fs_data['owner_id']),
+            ("Creación:", self.fs_data['creation_time']),
+            ("ARN:", self.fs_data['resource_arn'])
+        ]
+        
+        for i, (label, value) in enumerate(info):
+            ttk.Label(frame, text=label, font=('Segoe UI', 10, 'bold')).grid(
+                row=i, column=0, sticky='w', pady=5, padx=(0, 10))
+            
+            # Para el ARN, usar un Text widget con scroll
+            if label == "ARN:" or label == "DNS Name:" or label == "File System ID:":
+                text_widget = tk.Text(frame, height=2, width=60, wrap='word')
+                text_widget.insert('1.0', value)
+                text_widget.config(state='disabled')
+                text_widget.grid(row=i, column=1, sticky='w', pady=5)
+            else:
+                ttk.Label(frame, text=value).grid(row=i, column=1, sticky='w', pady=5)
+    
+    def crear_tab_configuracion(self, parent):
+        """Crear pestaña de configuración específica del tipo"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill='both', expand=True, padx=15, pady=15)
+        
+        fs_type = self.fs_data['type']
+        
+        if fs_type == 'WINDOWS':
+            self.mostrar_config_windows(frame)
+        elif fs_type == 'LUSTRE':
+            self.mostrar_config_lustre(frame)
+        elif fs_type == 'ONTAP':
+            self.mostrar_config_ontap(frame)
+        elif fs_type == 'OPENZFS':
+            self.mostrar_config_openzfs(frame)
+        else:
+            ttk.Label(frame, text="Configuración no disponible").pack()
+    
+    def mostrar_config_windows(self, parent):
+        """Mostrar configuración de Windows FSx"""
+        config = self.fs_data['windows_config']
+        if not config:
+            ttk.Label(parent, text="No hay configuración disponible").pack()
             return
         
-        self.selected_fs = fs_data
+        info = []
+        if 'ThroughputCapacity' in config:
+            info.append(("Throughput Capacity:", f"{config['ThroughputCapacity']} MB/s"))
+        if 'DeploymentType' in config:
+            info.append(("Deployment Type:", config['DeploymentType']))
+        if 'ActiveDirectoryId' in config:
+            info.append(("Active Directory ID:", config['ActiveDirectoryId']))
+        if 'AutomaticBackupRetentionDays' in config:
+            info.append(("Backup Retention:", f"{config['AutomaticBackupRetentionDays']} días"))
+        if 'DailyAutomaticBackupStartTime' in config:
+            info.append(("Backup Start Time:", config['DailyAutomaticBackupStartTime']))
+        if 'CopyTagsToBackups' in config:
+            info.append(("Copy Tags to Backups:", str(config['CopyTagsToBackups'])))
         
-        # Formatear detalles
-        details = f"""📁 File System Details
-
-🔹 ID: {fs_data['id']}
-🔹 Nombre: {fs_data['name']}
-🔹 Tipo: {fs_data['type']}
-🔹 Estado: {fs_data['lifecycle']}
-🔹 Capacidad: {fs_data['storage_capacity']} GB
-🔹 Tipo de Almacenamiento: {fs_data['storage_type']}
-🔹 IOPS: {fs_data['iops']}
-🔹 Throughput: {fs_data['throughput_capacity']} MB/s
-
-🌐 Network Configuration
-🔹 VPC: {fs_data['vpc_id']}
-🔹 Subnets: {', '.join(fs_data['subnet_ids'])}
-🔹 Network Interfaces: {', '.join(fs_data['network_interface_ids'])}
-
-🔒 Security
-🔹 KMS Key: {fs_data['kms_key_id']}
-
-⚙️ Backup Configuration
-🔹 Retention Days: {fs_data['automatic_backup_retention_days']}
-🔹 Backup Start Time: {fs_data['daily_automatic_backup_start_time']}
-🔹 Copy Tags to Backups: {fs_data['copy_tags_to_backups']}
-
-🕒 Maintenance
-🔹 Maintenance Window: {fs_data['maintenance_window']}
-🔹 Creation Time: {fs_data['creation_time']}
-"""
-        
-        # Actualizar texto
-        self.details_text.delete('1.0', tk.END)
-        self.details_text.insert('1.0', details)
-
-    def mostrar_menu_contextual(self, event):
-        """Muestra el menú contextual"""
-        item = self.tree_fsx.identify_row(event.y)
-        if item:
-            self.tree_fsx.selection_set(item)
-            menu = tk.Menu(self.parent_frame, tearoff=0)
-            menu.add_command(label="Ver Detalles", command=lambda: self.mostrar_detalles())
-            menu.add_command(label="Ver Métricas", command=self.ver_metricas)
-            menu.add_separator()
-            menu.add_command(label="Crear Backup", command=self.crear_backup)
-            menu.add_command(label="Modificar", command=self.modificar_fs)
-            menu.tk_popup(event.x_root, event.y_root)
-
-    def crear_backup(self):
-        """Crear backup del file system seleccionado"""
-        if not self.selected_fs:
-            messagebox.showwarning("Sin selección", "Selecciona un file system primero")
+        for i, (label, value) in enumerate(info):
+            ttk.Label(parent, text=label, font=('Segoe UI', 10, 'bold')).grid(
+                row=i, column=0, sticky='w', pady=5, padx=(0, 10))
+            ttk.Label(parent, text=value).grid(row=i, column=1, sticky='w', pady=5)
+    
+    def mostrar_config_lustre(self, parent):
+        """Mostrar configuración de Lustre FSx"""
+        config = self.fs_data['lustre_config']
+        if not config:
+            ttk.Label(parent, text="No hay configuración disponible").pack()
             return
         
-        # Implementar lógica de backup
-        messagebox.showinfo("Crear Backup", 
-                          f"Iniciando backup del file system: {self.selected_fs['name']}\n\n"
-                          "Esta función está en desarrollo.")
-
-    def ver_metricas(self):
-        """Ver métricas del file system seleccionado"""
-        if not self.selected_fs:
-            messagebox.showwarning("Sin selección", "Selecciona un file system primero")
+        info = []
+        if 'DeploymentType' in config:
+            info.append(("Deployment Type:", config['DeploymentType']))
+        if 'PerUnitStorageThroughput' in config:
+            info.append(("Per Unit Throughput:", f"{config['PerUnitStorageThroughput']} MB/s/TiB"))
+        if 'MountName' in config:
+            info.append(("Mount Name:", config['MountName']))
+        if 'DataRepositoryConfiguration' in config:
+            repo = config['DataRepositoryConfiguration']
+            if 'ImportPath' in repo:
+                info.append(("Import Path:", repo['ImportPath']))
+            if 'ExportPath' in repo:
+                info.append(("Export Path:", repo['ExportPath']))
+        
+        for i, (label, value) in enumerate(info):
+            ttk.Label(parent, text=label, font=('Segoe UI', 10, 'bold')).grid(
+                row=i, column=0, sticky='w', pady=5, padx=(0, 10))
+            ttk.Label(parent, text=value).grid(row=i, column=1, sticky='w', pady=5)
+    
+    def mostrar_config_ontap(self, parent):
+        """Mostrar configuración de ONTAP FSx"""
+        config = self.fs_data['ontap_config']
+        if not config:
+            ttk.Label(parent, text="No hay configuración disponible").pack()
             return
         
-        # Implementar visualización de métricas
-        messagebox.showinfo("Ver Métricas", 
-                          f"Métricas del file system: {self.selected_fs['name']}\n\n"
-                          "Esta función está en desarrollo.")
-
-    def modificar_fs(self):
-        """Modificar configuración del file system seleccionado"""
-        if not self.selected_fs:
-            messagebox.showwarning("Sin selección", "Selecciona un file system primero")
+        info = []
+        if 'DeploymentType' in config:
+            info.append(("Deployment Type:", config['DeploymentType']))
+        if 'ThroughputCapacity' in config:
+            info.append(("Throughput Capacity:", f"{config['ThroughputCapacity']} MB/s"))
+        if 'AutomaticBackupRetentionDays' in config:
+            info.append(("Backup Retention:", f"{config['AutomaticBackupRetentionDays']} días"))
+        if 'DailyAutomaticBackupStartTime' in config:
+            info.append(("Backup Start Time:", config['DailyAutomaticBackupStartTime']))
+        
+        for i, (label, value) in enumerate(info):
+            ttk.Label(parent, text=label, font=('Segoe UI', 10, 'bold')).grid(
+                row=i, column=0, sticky='w', pady=5, padx=(0, 10))
+            ttk.Label(parent, text=value).grid(row=i, column=1, sticky='w', pady=5)
+    
+    def mostrar_config_openzfs(self, parent):
+        """Mostrar configuración de OpenZFS FSx"""
+        config = self.fs_data['openzfs_config']
+        if not config:
+            ttk.Label(parent, text="No hay configuración disponible").pack()
             return
         
-        # Implementar modificación de configuración
-        messagebox.showinfo("Modificar File System", 
-                          f"Modificando file system: {self.selected_fs['name']}\n\n"
-                          "Esta función está en desarrollo.")
+        info = []
+        if 'DeploymentType' in config:
+            info.append(("Deployment Type:", config['DeploymentType']))
+        if 'ThroughputCapacity' in config:
+            info.append(("Throughput Capacity:", f"{config['ThroughputCapacity']} MB/s"))
+        if 'AutomaticBackupRetentionDays' in config:
+            info.append(("Backup Retention:", f"{config['AutomaticBackupRetentionDays']} días"))
+        if 'CopyTagsToBackups' in config:
+            info.append(("Copy Tags to Backups:", str(config['CopyTagsToBackups'])))
+        if 'CopyTagsToVolumes' in config:
+            info.append(("Copy Tags to Volumes:", str(config['CopyTagsToVolumes'])))
+        
+        for i, (label, value) in enumerate(info):
+            ttk.Label(parent, text=label, font=('Segoe UI', 10, 'bold')).grid(
+                row=i, column=0, sticky='w', pady=5, padx=(0, 10))
+            ttk.Label(parent, text=value).grid(row=i, column=1, sticky='w', pady=5)
+    
+    def crear_tab_red(self, parent):
+        """Crear pestaña de información de red"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill='both', expand=True, padx=15, pady=15)
+        
+        ttk.Label(frame, text="VPC:", font=('Segoe UI', 10, 'bold')).grid(
+            row=0, column=0, sticky='w', pady=5, padx=(0, 10))
+        ttk.Label(frame, text=self.fs_data['vpc_id']).grid(
+            row=0, column=1, sticky='w', pady=5)
+        
+        ttk.Label(frame, text="Subnet IDs:", font=('Segoe UI', 10, 'bold')).grid(
+            row=1, column=0, sticky='nw', pady=5, padx=(0, 10))
+        
+        if self.fs_data['subnet_ids']:
+            subnets_text = '\n'.join(self.fs_data['subnet_ids'])
+            text_widget = tk.Text(frame, height=len(self.fs_data['subnet_ids']) + 1, width=50, wrap='none')
+            text_widget.insert('1.0', subnets_text)
+            text_widget.config(state='disabled')
+            text_widget.grid(row=1, column=1, sticky='w', pady=5)
+        else:
+            ttk.Label(frame, text="N/A").grid(row=1, column=1, sticky='w', pady=5)
+        
+        ttk.Label(frame, text="DNS Name:", font=('Segoe UI', 10, 'bold')).grid(
+            row=2, column=0, sticky='w', pady=5, padx=(0, 10))
+        ttk.Label(frame, text=self.fs_data['dns_name']).grid(
+            row=2, column=1, sticky='w', pady=5)
+    
+    def crear_tab_tags(self, parent):
+        """Crear pestaña de tags"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill='both', expand=True, padx=15, pady=15)
+        
+        if not self.fs_data['tags']:
+            ttk.Label(frame, text="No hay tags configurados").pack()
+            return
+        
+        # TreeView para tags
+        columns = ["Key", "Value"]
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=15)
+        
+        tree.heading("Key", text="Key")
+        tree.heading("Value", text="Value")
+        tree.column("Key", width=200)
+        tree.column("Value", width=400)
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree.pack(side="left", expand=True, fill='both')
+        scrollbar.pack(side="right", fill='y')
+        
+        # Insertar tags
+        for tag in self.fs_data['tags']:
+            tree.insert("", "end", values=(tag['Key'], tag['Value']))
